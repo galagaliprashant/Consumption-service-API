@@ -1,10 +1,17 @@
 /**
  * Data-driven module/testcase catalog for the dashboard.
  *
- * This is a PLACEHOLDER catalog shaped for an API test suite (Consumption
- * Service API). Replace it with real data once your automation suite exists —
- * either edit this array by hand, or generate it from your test framework
- * (e.g. a build step that scans your test files and emits this JSON shape).
+ * Seeded from the real pytest suite under automation/tests/. Each module's
+ * `id` is the pytest marker declared on that file (see automation/pytest.ini
+ * and the @pytest.mark.<marker> decorators in automation/tests/*.py) so it
+ * can be passed straight through as `pytest -m <id>` once testRunner.js is
+ * wired up to a real backend. Each testcase's `id` is the test function name
+ * (`pytest automation/tests/<file>.py::<id>`), so a single testcase can be
+ * targeted with `-k <id>` too.
+ *
+ * Keep this in sync with automation/tests/ by hand for now, or generate it
+ * with `pytest --collect-only -q` (or `--collect-only --json-report`) piped
+ * through a small script that groups by marker.
  *
  * Required shape per module:
  *   {
@@ -20,69 +27,105 @@ const TEST_MODULES = [
   {
     id: "auth",
     name: "Authentication",
-    description: "Login, token issuance, refresh, and access control",
+    description: "automation/tests/test_auth.py",
     testCases: [
-      { id: "auth-001", name: "Valid credentials return an access token" },
-      { id: "auth-002", name: "Invalid credentials are rejected with 401" },
-      { id: "auth-003", name: "Expired token is refused on protected routes" },
-      { id: "auth-004", name: "Refresh token issues a new access token" },
-      { id: "auth-005", name: "Revoked token cannot be reused" },
+      { id: "test_login_success", name: "AUTH-001 — User can successfully authenticate" },
     ],
   },
   {
-    id: "consumption-data",
-    name: "Consumption Data",
-    description: "Retrieval and filtering of consumption records",
+    id: "aircraft",
+    name: "Aircraft Details",
+    description: "automation/tests/test_aircraft_details.py",
     testCases: [
-      { id: "cons-001", name: "GET consumption returns records for a valid account" },
-      { id: "cons-002", name: "Date range filter returns only matching records" },
-      { id: "cons-003", name: "Pagination returns consistent page sizes" },
-      { id: "cons-004", name: "Unknown account id returns 404" },
-      { id: "cons-005", name: "Malformed query params return 400 with details" },
-      { id: "cons-006", name: "Response payload matches consumption schema" },
+      { id: "test_aircraft_details_valid", name: "AIR-001 — Aircraft details API returns a successful response" },
     ],
   },
   {
-    id: "metering",
-    name: "Metering",
-    description: "Meter reading ingestion and aggregation",
+    id: "aircraft_status",
+    name: "Aircraft Status",
+    description: "automation/tests/test_aircraft_status.py",
     testCases: [
-      { id: "meter-001", name: "New meter reading is accepted and stored" },
-      { id: "meter-002", name: "Duplicate reading for same interval is rejected" },
-      { id: "meter-003", name: "Out-of-order reading is flagged for review" },
-      { id: "meter-004", name: "Aggregated totals match sum of raw readings" },
+      { id: "test_aircraft_status_valid", name: "STAT-AC-P01 — Aircraft status endpoint returns 200" },
+      { id: "test_aircraft_status_aircraft_id", name: "Aircraft status response includes the aircraft ID" },
+      { id: "test_aircraft_status_aircraft_status", name: "Aircraft status field is present and valid" },
+      { id: "test_aircraft_status_aircraft_type", name: "Aircraft type field is present and valid" },
+      { id: "test_aircraft_status_err_devices", name: "Errored devices are reported in aircraft status" },
     ],
   },
   {
-    id: "billing",
-    name: "Billing",
-    description: "Bill generation and charge calculation",
+    id: "device",
+    name: "Device Status",
+    description: "automation/tests/test_device_status.py",
     testCases: [
-      { id: "bill-001", name: "Bill is generated for a closed billing cycle" },
-      { id: "bill-002", name: "Tiered rate calculation matches expected charge" },
-      { id: "bill-003", name: "Credit/adjustment is applied to the correct cycle" },
-      { id: "bill-004", name: "Bill cannot be generated for an open cycle" },
+      { id: "test_device_status_and_capture_aircraft", name: "DEV-001 — Device status API succeeds and captures aircraft ID" },
     ],
   },
   {
-    id: "notifications",
-    name: "Notifications",
-    description: "Usage alerts and billing notifications",
+    id: "device_details",
+    name: "Device Details",
+    description: "automation/tests/test_device_details.py",
     testCases: [
-      { id: "notif-001", name: "Threshold breach triggers a usage alert" },
-      { id: "notif-002", name: "Bill-ready event triggers a notification" },
-      { id: "notif-003", name: "Opted-out account receives no notifications" },
+      { id: "test_device_details_valid", name: "AD-DEVICE-P01 — Device details returned for a valid PN/SN" },
+      { id: "test_device_details_software_version", name: "Device details include the software version" },
+      { id: "test_device_details_errors", name: "Device details include reported errors" },
     ],
   },
   {
-    id: "error-handling",
-    name: "Error Handling & Resilience",
-    description: "Timeouts, malformed input, and downstream failures",
+    id: "info_notifications",
+    name: "Info Notifications",
+    description: "automation/tests/test_info_notifications.py",
     testCases: [
-      { id: "err-001", name: "Downstream timeout returns a 503 with retry hint" },
-      { id: "err-002", name: "Malformed JSON body returns 400" },
-      { id: "err-003", name: "Rate limit returns 429 with Retry-After header" },
-      { id: "err-004", name: "Partial downstream failure degrades gracefully" },
+      { id: "test_info_notifications_valid", name: "Info notifications endpoint returns success" },
+      { id: "test_info_notifications_empty_body", name: "Info notifications handle an empty body" },
+      { id: "test_info_notifications_extra_field", name: "Info notifications handle an unexpected extra field" },
+      { id: "test_info_failure_code", name: "Info notifications include a failure code" },
+      { id: "test_info_device_details", name: "Info notifications include device details" },
+    ],
+  },
+  {
+    id: "notification_details",
+    name: "Notification Details",
+    description: "automation/tests/test_notification_details.py",
+    testCases: [
+      { id: "test_notification_details_valid", name: "Notification details returned for a valid device/failure code" },
+      { id: "test_notification_failure_name", name: "Notification details include the failure name" },
+      { id: "test_notification_failure_type", name: "Notification details include the failure type" },
+      { id: "test_notification_inspection_instructions", name: "Notification details include inspection instructions" },
+      { id: "test_notification_repair_instructions", name: "Notification details include repair instructions" },
+    ],
+  },
+  {
+    id: "moderate_notifications",
+    name: "Moderate Notifications",
+    description: "automation/tests/test_moderate_notifications.py",
+    testCases: [
+      { id: "test_moderate_notifications_valid", name: "Moderate notifications endpoint returns success" },
+      { id: "test_moderate_notifications_empty_body", name: "Moderate notifications handle an empty body" },
+      { id: "test_moderate_notifications_extra_field", name: "Moderate notifications handle an unexpected extra field" },
+      { id: "test_moderate_failure_information", name: "Moderate notifications include failure information" },
+      { id: "test_moderate_repeat_count", name: "Moderate notifications include a repeat count" },
+      { id: "test_moderate_device_information", name: "Moderate notifications include device information" },
+    ],
+  },
+  {
+    id: "critical_notifications",
+    name: "Critical Notifications",
+    description: "automation/tests/test_critical_notifications.py",
+    testCases: [
+      { id: "test_critical_notifications_valid", name: "NOTIF-CRIT-P01 — Critical notifications endpoint returns success" },
+      { id: "test_critical_notifications_empty_result", name: "Critical notifications handle an empty result set" },
+      { id: "test_critical_notifications_extra_field", name: "Critical notifications handle an unexpected extra field" },
+      { id: "test_critical_notification_failure_code", name: "Critical notifications include a failure code" },
+      { id: "test_critical_notification_device_information", name: "Critical notifications include device information" },
+      { id: "test_critical_notification_time_of_failure", name: "Critical notifications include time of failure" },
+    ],
+  },
+  {
+    id: "update_error_status",
+    name: "Update Error Status",
+    description: "automation/tests/test_update_error_status.py",
+    testCases: [
+      { id: "test_update_error_status_valid", name: "Update error status accepts a valid update" },
     ],
   },
 ];

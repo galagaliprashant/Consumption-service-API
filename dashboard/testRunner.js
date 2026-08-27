@@ -9,15 +9,23 @@
  * end today.
  *
  * When your real automation suite is ready, replace the body of
- * `runTestCase()` (and/or `runTests()` itself) with a real call — for
- * example:
+ * `runTestCase()` (and/or `runTests()` itself) with a real call. This repo's
+ * suite lives in automation/ (pytest, see automation/pytest.ini and
+ * automation/tests/*.py) — module ids in testConfig.js are the pytest
+ * markers, and testcase ids are the test function names, so:
  *
- *   - POST to a backend endpoint that shells out to your test runner
- *     (pytest/Jest/Playwright/etc.) and streams results back, or
- *   - Trigger a CI job (GitHub Actions workflow_dispatch, Jenkins job) and
- *     poll it for status/results, or
- *   - Open a WebSocket/SSE connection to a runner process and forward events
- *     into `onProgress`.
+ *   - Simplest: a small backend endpoint that shells out to
+ *     `pytest automation/tests -m <moduleId>` (or `-k <testCaseId>` per
+ *     testcase) with `--json-report` (pytest-json-report plugin) or
+ *     `--junitxml=report.xml`, parses the result file, and returns it in the
+ *     Report shape below. The endpoint can run per-module and stream a
+ *     `testcase-done` event back after each `pytest -k <id>` call, or run the
+ *     whole selection once and report all results at the end.
+ *   - Or trigger a CI job (GitHub Actions workflow_dispatch running the same
+ *     pytest command) and poll it for status/results.
+ *   - Or open a WebSocket/SSE connection to a long-running pytest process
+ *     (e.g. via `pytest-jsonreport`'s per-test hooks) and forward events into
+ *     `onProgress` as each test finishes.
  *
  * As long as `runTests()` keeps the same signature and return shape, the UI
  * in app.js does not need to change at all.

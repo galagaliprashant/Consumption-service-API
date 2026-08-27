@@ -1,43 +1,32 @@
 /**
  * ============================================================================
- * SWAP-IN INTEGRATION POINT
+ * TEST RUNNER — real pytest backend, with an offline mock fallback
  * ============================================================================
- * This file is the ONLY place the dashboard talks to a "test runner". Right
- * now `runTests()` below is a MOCK — it simulates running each selected
- * module's testcases with random delays and randomized pass/fail/skip
- * results, so the UI (module selection -> progress -> report) works end to
- * end today.
+ * `runTests(selectedModules, { onProgress })` first tries the real backend
+ * in automation/server.py: POST /api/run streams Server-Sent Events back as
+ * each selected module's `pytest -m <moduleId>` run completes, and this file
+ * turns those events into the Report shape below.
  *
- * When your real automation suite is ready, replace the body of
- * `runTestCase()` (and/or `runTests()` itself) with a real call. This repo's
- * suite lives in automation/ (pytest, see automation/pytest.ini and
- * automation/tests/*.py) — module ids in testConfig.js are the pytest
- * markers, and testcase ids are the test function names, so:
+ * If that backend isn't reachable (server.py isn't running, e.g. you just
+ * opened index.html directly), runTests() automatically falls back to a
+ * MOCK implementation (randomized pass/fail/skip, simulated delays) so the
+ * UI still works for a quick look. An extra 'runner-mode' progress event
+ * ({ type: 'runner-mode', mode: 'live' | 'mock' }) tells the UI which one is
+ * active — see app.js's handling of the #mode-badge element.
  *
- *   - Simplest: a small backend endpoint that shells out to
- *     `pytest automation/tests -m <moduleId>` (or `-k <testCaseId>` per
- *     testcase) with `--json-report` (pytest-json-report plugin) or
- *     `--junitxml=report.xml`, parses the result file, and returns it in the
- *     Report shape below. The endpoint can run per-module and stream a
- *     `testcase-done` event back after each `pytest -k <id>` call, or run the
- *     whole selection once and report all results at the end.
- *   - Or trigger a CI job (GitHub Actions workflow_dispatch running the same
- *     pytest command) and poll it for status/results.
- *   - Or open a WebSocket/SSE connection to a long-running pytest process
- *     (e.g. via `pytest-jsonreport`'s per-test hooks) and forward events into
- *     `onProgress` as each test finishes.
- *
- * As long as `runTests()` keeps the same signature and return shape, the UI
- * in app.js does not need to change at all.
+ * To run in live mode: `cd automation && python3 server.py`, then open
+ * http://localhost:5050/ (serves this dashboard AND the API from the same
+ * origin). See dashboard/README.md and automation/server.py for details.
  *
  * Signature:
  *   runTests(selectedModules, { onProgress }) -> Promise<Report>
  *
  *   selectedModules: Array<Module>   (see testConfig.js for shape)
  *   onProgress(event): called as testcases start/finish, event is one of:
+ *     { type: 'runner-mode',     mode: 'live' | 'mock' }
  *     { type: 'module-start',   moduleId }
- *     { type: 'testcase-start', moduleId, testCaseId }
- *     { type: 'testcase-done',  moduleId, testCaseId, status, durationMs }
+ *     { type: 'testcase-start', moduleId, testCaseId }   (mock only)
+ *     { type: 'testcase-done',  moduleId, testCaseId, status, durationMs, message? }
  *     { type: 'module-done',    moduleId }
  *
  *   Report shape:
@@ -59,69 +48,142 @@
  * ============================================================================
  */
 
+const RUN_ENDPOINT = "/api/run";
+const HEALTH_ENDPOINT = "/api/health";
+
+async function runTests(selectedModules, { onProgress } = {}) {
+  const startedAt = new Date();
+  const live = await backendAvailable();
+  onProgress?.({ type: "runner-mode", mode: live ? "live" : "mock" });
+
+  let resultsByModule;
+  if (live) {
+    try {
+      resultsByModule = await runViaBackend(selectedModules, onProgress);
+    } catch (err) {
+      console.warn("Live pytest backend failed mid-run, falling back to mock runner:", err);
+      onProgress?.({ type: "runner-mode", mode: "mock" });
+      resultsByModule = await runMock(selectedModules, onProgress);
+    }
+  } else {
+    resultsByModule = await runMock(selectedModules, onProgress);
+  }
+
+  return buildReport(selectedModules, resultsByModule, startedAt, new Date());
+}
+
+async function backendAvailable() {
+  try {
+    const res = await fetch(HEALTH_ENDPOINT);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Streams POST /api/run (Server-Sent Events) and collects testcase-done
+ * results per module. See automation/server.py for the producing side.
+ */
+async function runViaBackend(selectedModules, onProgress) {
+  const body = JSON.stringify({
+    modules: selectedModules.map((m) => ({ id: m.id, testCaseIds: m.testCases.map((tc) => tc.id) })),
+  });
+
+  const res = await fetch(RUN_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`Backend run request failed: HTTP ${res.status}`);
+  }
+
+  const resultsByModule = new Map(selectedModules.map((m) => [m.id, []]));
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let sepIndex;
+    while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+      const rawEvent = buffer.slice(0, sepIndex);
+      buffer = buffer.slice(sepIndex + 2);
+      const dataLine = rawEvent.split("\n").find((l) => l.startsWith("data:"));
+      if (!dataLine) continue;
+
+      const event = JSON.parse(dataLine.slice(5).trim());
+      if (event.type === "testcase-done") {
+        resultsByModule.get(event.moduleId)?.push(event);
+      }
+      onProgress?.(event);
+    }
+  }
+
+  return resultsByModule;
+}
+
 function randomBetween(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-/**
- * MOCK single-testcase execution. Replace this with a real call to your
- * runner (e.g. `await fetch('/api/run-testcase', { method: 'POST', body: ... })`).
- */
-async function runTestCase(moduleId, testCase) {
-  const durationMs = randomBetween(150, 650);
-  await new Promise((resolve) => setTimeout(resolve, durationMs));
-
-  const roll = Math.random();
-  let status = "passed";
-  let message = null;
-  if (roll > 0.93) {
-    status = "failed";
-    message = "Assertion failed: expected response status 200, got 500";
-  } else if (roll > 0.88) {
-    status = "skipped";
-    message = "Skipped: precondition not met";
-  }
-
-  return {
-    id: testCase.id,
-    name: testCase.name,
-    status,
-    durationMs,
-    message,
-  };
-}
-
-/**
- * Runs all testcases for the given modules and produces a report.
- * MOCK implementation — see file header for how to wire in a real runner.
- */
-async function runTests(selectedModules, { onProgress } = {}) {
-  const startedAt = new Date();
-  const moduleReports = [];
+/** MOCK fallback — randomized pass/fail/skip with simulated delays. */
+async function runMock(selectedModules, onProgress) {
+  const resultsByModule = new Map();
 
   for (const mod of selectedModules) {
     onProgress?.({ type: "module-start", moduleId: mod.id });
+    const results = [];
 
-    const testCaseReports = [];
     for (const tc of mod.testCases) {
       onProgress?.({ type: "testcase-start", moduleId: mod.id, testCaseId: tc.id });
-      const result = await runTestCase(mod.id, tc);
-      testCaseReports.push(result);
-      onProgress?.({
-        type: "testcase-done",
-        moduleId: mod.id,
-        testCaseId: tc.id,
-        status: result.status,
-        durationMs: result.durationMs,
-      });
+
+      const durationMs = randomBetween(150, 650);
+      await new Promise((resolve) => setTimeout(resolve, durationMs));
+
+      const roll = Math.random();
+      let status = "passed";
+      let message = null;
+      if (roll > 0.93) {
+        status = "failed";
+        message = "Assertion failed: expected response status 200, got 500";
+      } else if (roll > 0.88) {
+        status = "skipped";
+        message = "Skipped: precondition not met";
+      }
+
+      const result = { testCaseId: tc.id, status, durationMs, message };
+      results.push(result);
+      onProgress?.({ type: "testcase-done", moduleId: mod.id, ...result });
     }
 
-    const totals = summarize(testCaseReports);
-    moduleReports.push({ id: mod.id, name: mod.name, totals, testCases: testCaseReports });
+    resultsByModule.set(mod.id, results);
     onProgress?.({ type: "module-done", moduleId: mod.id });
   }
 
-  const finishedAt = new Date();
+  return resultsByModule;
+}
+
+function buildReport(selectedModules, resultsByModule, startedAt, finishedAt) {
+  const moduleReports = selectedModules.map((mod) => {
+    const results = new Map((resultsByModule.get(mod.id) || []).map((r) => [r.testCaseId, r]));
+    const testCases = mod.testCases.map((tc) => {
+      const result = results.get(tc.id);
+      return {
+        id: tc.id,
+        name: tc.name,
+        status: result?.status ?? "failed",
+        durationMs: result?.durationMs ?? 0,
+        message: result?.message ?? (result ? null : "No result reported for this testcase"),
+      };
+    });
+    return { id: mod.id, name: mod.name, totals: summarize(testCases), testCases };
+  });
+
   const allTestCases = moduleReports.flatMap((m) => m.testCases);
 
   return {

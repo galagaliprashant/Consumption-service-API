@@ -1,6 +1,7 @@
 (() => {
   "use strict";
 
+  const modeBadgeEl = document.getElementById("mode-badge");
   const moduleListEl = document.getElementById("module-list");
   const selectAllEl = document.getElementById("select-all");
   const runBtn = document.getElementById("run-btn");
@@ -116,7 +117,25 @@
     overallLabelEl.textContent = `${overallState.done} / ${overallState.total}`;
   }
 
+  function setRunnerMode(mode) {
+    if (mode === "live") {
+      modeBadgeEl.textContent = "Live pytest runner";
+      modeBadgeEl.title = "Results come from a real pytest run via automation/server.py";
+      modeBadgeEl.classList.remove("badge--mock");
+      modeBadgeEl.classList.add("badge--live");
+    } else {
+      modeBadgeEl.textContent = "Mock runner";
+      modeBadgeEl.title = "automation/server.py isn't reachable — showing simulated results";
+      modeBadgeEl.classList.remove("badge--live");
+      modeBadgeEl.classList.add("badge--mock");
+    }
+  }
+
   function handleProgressEvent(event) {
+    if (event.type === "runner-mode") {
+      setRunnerMode(event.mode);
+      return;
+    }
     if (event.type === "testcase-done") {
       const state = moduleProgressState[event.moduleId];
       state.done += 1;

@@ -14,6 +14,10 @@ button executes real `pytest -m <module>` runs against automation/tests via
 POST /api/run (streamed as Server-Sent Events), instead of the built-in
 mock. If this server isn't running, the dashboard falls back to the mock
 runner automatically (see dashboard/testRunner.js).
+
+Each pytest run's output (-v) is echoed live to *this* terminal — the one
+running `python3 server.py` — as it executes, so you can watch the actual
+test run happen alongside the browser's progress view.
 """
 
 import json
@@ -21,6 +25,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -42,31 +47,48 @@ VALID_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def run_module(module_id, expected_test_ids):
-    """Run `pytest -m <module_id>` for real and return a list of
+    """Run `pytest -m <module_id>` for real, echoing its output live to this
+    process's own terminal as it runs, and return a list of
     {testCaseId, status, durationMs, message} for each expected testcase."""
 
     with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
         junit_path = Path(tmp.name)
 
-    stderr_tail = ""
+    print(f"\n\033[1m=== pytest -m {module_id} ===\033[0m", flush=True)
+    tail_lines = []
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             [
                 sys.executable, "-m", "pytest",
                 "tests",
                 "-m", module_id,
                 f"--junitxml={junit_path}",
-                "-q",
+                "-v",
             ],
             cwd=AUTOMATION_DIR,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=TEST_TIMEOUT_SECONDS,
+            bufsize=1,
         )
-        if proc.returncode not in (0, 1):
-            stderr_tail = proc.stderr[-2000:]
+
+        deadline = time.monotonic() + TEST_TIMEOUT_SECONDS
+        for line in proc.stdout:
+            print(line, end="", flush=True)
+            tail_lines.append(line)
+            if len(tail_lines) > 200:
+                tail_lines.pop(0)
+            if time.monotonic() > deadline:
+                proc.kill()
+                proc.wait()
+                raise subprocess.TimeoutExpired(proc.args, TEST_TIMEOUT_SECONDS)
+
+        returncode = proc.wait()
+        stderr_tail = "".join(tail_lines[-40:]) if returncode not in (0, 1) else ""
         results = _parse_junit(junit_path) if junit_path.exists() else {}
+        print(f"\033[1m=== {module_id}: pytest exited {returncode} ===\033[0m", flush=True)
     except subprocess.TimeoutExpired:
+        print(f"\033[1m=== {module_id}: TIMED OUT after {TEST_TIMEOUT_SECONDS}s ===\033[0m", flush=True)
         return [
             {
                 "testCaseId": tid,

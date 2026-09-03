@@ -21,18 +21,24 @@ test run happen alongside the browser's progress view.
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 AUTOMATION_DIR = Path(__file__).resolve().parent
 REPO_ROOT = AUTOMATION_DIR.parent
 DASHBOARD_DIR = REPO_ROOT / "dashboard"
+
+FEEDBACK_PATH = AUTOMATION_DIR / "feedback.jsonl"
+FEEDBACK_LOCK = threading.Lock()
 
 MIME_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -44,6 +50,10 @@ MIME_TYPES = {
 
 TEST_TIMEOUT_SECONDS = 180
 VALID_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def run_module(module_id, expected_test_ids):
@@ -59,7 +69,7 @@ def run_module(module_id, expected_test_ids):
     try:
         proc = subprocess.Popen(
             [
-                sys.executable, "-m", "pytest",
+                sys.executable, "-u", "-m", "pytest",
                 "tests",
                 "-m", module_id,
                 f"--junitxml={junit_path}",
@@ -70,10 +80,11 @@ def run_module(module_id, expected_test_ids):
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
 
         deadline = time.monotonic() + TEST_TIMEOUT_SECONDS
-        for line in proc.stdout:
+        for line in iter(proc.stdout.readline, ""):
             print(line, end="", flush=True)
             tail_lines.append(line)
             if len(tail_lines) > 200:
@@ -151,11 +162,17 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/health":
             self._send_json(200, {"status": "ok"})
             return
+        if self.path == "/api/feedback":
+            self._handle_feedback_list()
+            return
         self._serve_static()
 
     def do_POST(self):
         if self.path == "/api/run":
             self._handle_run()
+            return
+        if self.path == "/api/feedback":
+            self._handle_feedback_submit()
             return
         self.send_error(404)
 
@@ -175,6 +192,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(data)
 
@@ -210,6 +228,58 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def _handle_feedback_submit(self):
+        """Append one feedback entry (rating + comment about the run
+        experience) to automation/feedback.jsonl, one JSON object per line."""
+        length = int(self.headers.get("Content-Length", 0))
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            rating = payload.get("rating", 0)
+            if not isinstance(rating, int) or not 0 <= rating <= 5:
+                raise ValueError("rating must be an integer 0-5")
+            entry = {
+                "rating": rating,
+                "name": str(payload.get("name") or "")[:60],
+                "comment": str(payload.get("comment") or "")[:2000],
+                "submittedAt": str(payload.get("submittedAt") or "")[:40] or _now_iso(),
+                "runContext": payload.get("runContext"),
+                "receivedAt": _now_iso(),
+            }
+            if not entry["rating"] and not entry["comment"]:
+                raise ValueError("feedback needs a rating or a comment")
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            self.send_error(400, f"Bad request: {exc}")
+            return
+
+        with FEEDBACK_LOCK:
+            with FEEDBACK_PATH.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry) + "\n")
+
+        print(
+            f"\033[1m=== feedback: {rating or '-'}/5 from "
+            f"{entry['name'] or 'anonymous'} ===\033[0m",
+            flush=True,
+        )
+        if entry["comment"]:
+            print(entry["comment"], flush=True)
+
+        self._send_json(200, {"status": "ok"})
+
+    def _handle_feedback_list(self):
+        entries = []
+        if FEEDBACK_PATH.exists():
+            with FEEDBACK_LOCK:
+                lines = FEEDBACK_PATH.read_text(encoding="utf-8").splitlines()
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        self._send_json(200, {"feedback": entries[-100:]})
+
     def _send_json(self, status, obj):
         data = json.dumps(obj).encode("utf-8")
         self.send_response(status)
@@ -222,7 +292,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 5050
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f"Dashboard + live pytest backend running at http://localhost:{port}/")
+    print(f"Dashboard + live pytest backend running at http://localhost:{port}/", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

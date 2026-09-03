@@ -3,19 +3,24 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Test Automation Dashboard</title>
+<title>Poleen Test Automation Dashboard</title>
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 <div class="app">
   <header class="app-header">
     <div class="app-header__title">
-      <h1>Test Automation Dashboard</h1>
+      <h1>Poleen Test Automation Dashboard</h1>
       <p class="subtitle">Select modules, run the suite, review the report.</p>
     </div>
-    <span class="badge badge--mock" id="mode-badge" title="Results are simulated until a real test runner is wired into testRunner.js">
-      Mock runner
-    </span>
+    <div class="app-header__meta">
+      <span class="badge badge--mock" id="mode-badge" title="Results are simulated until a real test runner is wired into testRunner.js">
+        Mock runner
+      </span>
+      <span class="run-counter" id="run-counter" title="Cumulative testcases executed on this browser">
+        0 tests run
+      </span>
+    </div>
   </header>
 
   <main class="layout">
@@ -61,6 +66,47 @@
       <p class="report-meta" id="report-meta"></p>
 
       <div id="report-modules"></div>
+    </section>
+
+    <section class="panel feedback-panel" id="feedback-panel" aria-labelledby="feedback-heading">
+      <div class="panel__header">
+        <h2 id="feedback-heading">Feedback on this run</h2>
+        <span class="status-text">Tell us how the test-run experience felt</span>
+      </div>
+
+      <form class="feedback-form" id="feedback-form">
+        <div class="feedback-field">
+          <span class="feedback-label">How was this test run experience?</span>
+          <div class="rating" id="rating" role="radiogroup" aria-label="Rating out of 5">
+            <button type="button" class="rating__star" role="radio" aria-checked="false" data-value="1" aria-label="1 star">&#9733;</button>
+            <button type="button" class="rating__star" role="radio" aria-checked="false" data-value="2" aria-label="2 stars">&#9733;</button>
+            <button type="button" class="rating__star" role="radio" aria-checked="false" data-value="3" aria-label="3 stars">&#9733;</button>
+            <button type="button" class="rating__star" role="radio" aria-checked="false" data-value="4" aria-label="4 stars">&#9733;</button>
+            <button type="button" class="rating__star" role="radio" aria-checked="false" data-value="5" aria-label="5 stars">&#9733;</button>
+          </div>
+        </div>
+
+        <div class="feedback-field">
+          <label class="feedback-label" for="feedback-name">Name <span class="feedback-optional">(optional)</span></label>
+          <input type="text" id="feedback-name" class="feedback-input" maxlength="60" placeholder="Who's running this?" autocomplete="name" />
+        </div>
+
+        <div class="feedback-field">
+          <label class="feedback-label" for="feedback-comment">Comments</label>
+          <textarea id="feedback-comment" class="feedback-textarea" rows="4" maxlength="2000"
+            placeholder="What worked well? What was slow, confusing, or flaky? Anything you'd want changed?"></textarea>
+        </div>
+
+        <div class="feedback-actions">
+          <button type="submit" class="btn btn--primary" id="feedback-submit">Submit Feedback</button>
+          <span class="feedback-status" id="feedback-status" role="status"></span>
+        </div>
+      </form>
+
+      <div class="feedback-history" id="feedback-history" hidden>
+        <h3 class="feedback-history__title">Recent feedback</h3>
+        <ul class="feedback-list" id="feedback-list"></ul>
+      </div>
     </section>
   </main>
 </div>

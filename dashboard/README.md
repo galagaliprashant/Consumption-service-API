@@ -1,4 +1,4 @@
-# Test Automation Dashboard
+# Poleen Test Automation Dashboard
 
 A self-contained, dependency-free (plain HTML/CSS/JS) dashboard: select
 test modules, run the suite, get a one-click report.
